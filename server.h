@@ -1,3 +1,7 @@
+//compile and run in linux
+//already tested on ubuntu desktop
+
+//Collaborated by:	Hongfeng Wang	22289267	Haoran Zhang		22289211
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,28 +14,19 @@
 #include <time.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <errno.h>
 
 #define BUFFER_SIZE 1024
-#define MAX_ROUND 10
-#define MAX_PLAYER 50
+#define MAX_ROUND 20
+#define MAX_PLAYER 20
 #define MAX_LIFE 5
 
 extern int playResult[MAX_ROUND+1][MAX_PLAYER];
 extern int dice[MAX_ROUND+1][2];
-//extern int playerFD[MAX_PLAYER];
-//extern bool gameStatus;
-//extern int currentRound;//X
 extern pid_t pid,readyTimer,rejectClient,playing[MAX_ROUND+1][MAX_PLAYER];
 extern int playerCount;
 extern int status[MAX_ROUND+1][MAX_PLAYER];
 
-////function declare
-//void parse_message(char *msg);
-//int send_message(int client_fd, char* msg);
-//void rollDice();
-//int findPlayer(int client_fd);
-//void play_game_round(int client_fd,bool result);
-//void setup_player(int count, int client_fd);
 
 struct P
 {
@@ -58,13 +53,13 @@ int parse_message(int round,int index, char *msg) {
         
         int d1 = dice[round][0], d2 = dice[round][1];
         
-        printf("dices:%d\t%d\n",d1,d2);
-        
         //get the option
         strtok(NULL,comma);//get the "MOV"
         char *option=strtok(NULL,comma);
         
         if(strstr(option,"EVEN")) {
+	    if(strtok(NULL,comma))
+		return 0;
             if(d1!=d2&&(d1+d2)%2==0)
                 return 1;
             else
@@ -72,13 +67,17 @@ int parse_message(int round,int index, char *msg) {
         }
         
         else if(strstr(option,"ODD")) {
-            if(d1+d2>5&&(d1+d2)%2==1)
+            if(strtok(NULL,comma))
+		return 0;
+	    if(d1+d2>5&&(d1+d2)%2==1)
                 return 1;
             else
                 return 2;
         }
         
         else if(strstr(option,"DOUB")) {
+	    if(strtok(NULL,comma))
+		return 0;
             if(d1==d2)
                 return 1;
             else
@@ -103,10 +102,8 @@ int parse_message(int round,int index, char *msg) {
  Return: 1 for Successful sending, 0 otherwise
  */
 int send_message(int client_fd, char* msg) {
-    return send(client_fd, msg, strlen(msg), 0);
+    return send(client_fd, msg, strlen(msg),0);
 }
-
-
 
 /*
  void rollDice():
@@ -120,94 +117,56 @@ void rollDice() {
         for(int j = 0;j < 2; j++)
             dice[i][j]=rand() % 6 + 1;
 }
-///*
-// int findPlayer(int client_fd):
-// Looking for the index in clientFD array
-// */
-//int findPlayer(int client_fd) {
-//    for(int i=0;i<MAX_PLAYER;i++) {
-//        if(playerFD[i]==client_fd)
-//            return i;
-//    }
-//    return -1;
-//}
-//
-///*
-// void play_game_round(int client_fd,bool result):
-// Dealing with win or lose message sending
-// Input: int client_fd, boolean result (win:true/lose:false)
-// Return:    void
-// */
-//void play_game_round(int client_fd,bool result) {
-//    int index=findPlayer(client_fd);
-//    char * res = calloc(BUFFER_SIZE, sizeof(char));
-//    if(result==true) {
-//        playResult[currentRound][index]=playResult[currentRound-1][index];
-//        sprintf(res,"%d,PASS",client_fd*100);
-//        send_message(client_fd,res);
-//        *res='\0';
-//        printf("%d win\n",client_fd*100);
-//    }
-//    else {
-//        playResult[currentRound][index]=playResult[currentRound-1][index]-1;
-//        sprintf(res,"%d,FAIL",client_fd*100);
-//        send_message(client_fd,res);
-//        *res='\0';
-//        printf("%d lost\n",client_fd*100);
-//    }
-//    currentRound++;
-//}
 
 /*
- void setup_player(int count, int client_fd):
-    Initialise the global variables for the player
- Input:
- */
+  void setup_player(int count, int client_fd);
+  setup the player
+*/
 void setup_player(int count, int client_fd) {
-    
-    
-    
     char *buf = calloc(BUFFER_SIZE, sizeof(char));
     int read = recv(client_fd, buf, BUFFER_SIZE, 0);    // Try to read from the incoming client
     if (read < 0){
         fprintf(stderr,"Client read failed\n");
-        //close(server_fd);
         exit(EXIT_FAILURE);
     }
     if(strstr(buf,"INIT")) {
-        //memset(buf, 0, sizeof(buf));
-        //buf[0]='\0';
         player[count].clientFD=client_fd;
         player[count].playerId=100+client_fd;
         player[count].life[0]=MAX_LIFE;
         player[count].inGame=true;
         bzero(buf,BUFFER_SIZE);
         sprintf(buf,"WELCOME,%d",player[count].playerId);
-        printf("SEND: %s",buf);
+        printf("SEND: %s\n",buf);
         send_message(client_fd,buf);
-
     }
     playerCount++;
 }
 
+//end the game and send coerresponding msg
 void teargame(int index,bool result) {
     char *buf = calloc(BUFFER_SIZE, sizeof(char));
     bzero(buf,BUFFER_SIZE);
     
     if(result) {//send VIC
         sprintf(buf,"%d,VICT",player[index].playerId);
+	printf("Winner:%d\n",player[index].playerId);
     }
     else {
         sprintf(buf,"%d,ELIM",player[index].playerId);
+	printf("Eliminated:%d\n",player[index].playerId);
     }
     send_message(player[index].clientFD,buf);
     player[index].inGame=false;
     close(player[index].clientFD);
 }
 
+/*
+  int playerLeft(int round);
+  count the player who lives>0 AND still in game
+*/
 int playerLeft(int round) {
     int sum=0;
-    for(int i=0;player[i].inGame&&i<playerCount;i++) {
+    for(int i=0;i<playerCount;i++) {
         if(player[i].inGame&&player[i].life[round]>0) sum++;
     }
     return sum;
